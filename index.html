@@ -90,18 +90,24 @@ details.sec .inner{padding:4px 12px 12px;display:grid;gap:14px}
             <div class="row2">
               <label>法人代表人<input type="text" id="sRep" autocomplete="off"></label>
               <label>統一編號<input type="text" id="sUid" autocomplete="off"></label>
-              <label>業務員一證號<input type="text" id="sC1" autocomplete="off" autocapitalize="characters"></label>
-              <label>業務員二證號<input type="text" id="sC2" autocomplete="off" autocapitalize="characters"></label>
+              <label>業務員一證號（兩位業務員才填）<input type="text" id="sC1" autocomplete="off" autocapitalize="characters"></label>
+              <label>業務員二證號（選填）<input type="text" id="sC2" autocomplete="off" autocapitalize="characters"></label>
             </div>
             <div class="seg">
               <button type="button" id="schSave">儲存</button>
               <button type="button" id="schDel">刪除這間</button>
             </div>
-            <p class="note" id="schNote">學校資料存在這支手機的瀏覽器裡，換裝置或清除網站資料後需重新建立。</p>
+            <p class="note" id="schNote">兩個證號都留空時，會使用「我的證號」。資料存在這支手機的瀏覽器裡，請記得到最下方備份。</p>
           </div>
         </details>
       </div>
       <p class="note" id="presetNote"></p>
+    </section>
+
+    <section class="card" id="mineCard">
+      <h2>我的證號</h2>
+      <label>業務員證號（只需設定一次）<input type="text" id="myCert" autocomplete="off" autocapitalize="characters" placeholder="例如 HB0L123456"></label>
+      <p class="note" id="myNote"></p>
     </section>
 
     <div id="guided" style="display:grid;gap:16px;min-width:0">
@@ -208,6 +214,25 @@ details.sec .inner{padding:4px 12px 12px;display:grid;gap:14px}
       <label>檔名<input type="text" id="fname" autocomplete="off"></label>
       <button type="button" class="primary" id="save">儲存 PDF</button>
       <p id="status"></p>
+    </section>
+
+    <section class="card" id="backupCard">
+      <h2>備份與還原</h2>
+      <p class="note">學校資料和「我的證號」存在這支手機的瀏覽器裡，換手機或電腦不會跟著走。iPhone 的 Safari 久未開啟網頁時，也可能被清掉。設定好之後，建議先匯出備份。備份檔不含客戶資料。</p>
+      <div class="seg">
+        <button type="button" id="bkFile">匯出成檔案</button>
+        <button type="button" id="bkCopy">複製成文字</button>
+      </div>
+      <label>匯入：貼上備份文字，或選擇備份檔
+        <textarea id="bkText" rows="4" style="font:inherit;font-size:14px;color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:6px;padding:9px 10px;width:100%;min-width:0" placeholder="把備份文字貼在這裡"></textarea>
+      </label>
+      <input type="file" id="bkPick" accept=".json,application/json,text/plain" style="font:inherit;font-size:.85rem;max-width:100%">
+      <div class="seg" id="bkMode">
+        <button type="button" data-v="merge" aria-pressed="true">合併（保留原有學校）</button>
+        <button type="button" data-v="replace" aria-pressed="false">全部取代</button>
+      </div>
+      <button type="button" class="ghost" id="bkImport">匯入</button>
+      <p class="note" id="bkMsg" role="status"></p>
     </section>
   </form>
 
@@ -356,14 +381,14 @@ function normBirth(s){
 }
 
 /* ---------- 狀態 ---------- */
-const state = {type:'school', school:'puren', rel:'rep', kind:'prop', fnameTouched:false, custom:null, sample:true};
-const DEFAULT_SCHOOLS = [
-  {id:'puren', label:'普仁國小', name:'桃園市中壢區普仁國小', rep:'朱曉彥', uid:'44996172', c1:'JB1J291340', c2:'HB0L794757'},
-  {id:'douliu', label:'斗六高中', name:'國立斗六高級中學', rep:'程俊堅', uid:'63504303', c1:'HB0L794757', c2:''}
-];
-let schools = DEFAULT_SCHOOLS.map(x=>({...x}));
+const state = {type:'school', school:'__free', rel:'rep', kind:'prop', fnameTouched:false, custom:null, sample:true};
+let schools = [];
+let myCert = '';
 try{ const raw = localStorage.getItem('schools_v1'); if(raw){ const a=JSON.parse(raw); if(Array.isArray(a)) schools=a; } }catch(e){}
-function saveSchools(){ try{ localStorage.setItem('schools_v1', JSON.stringify(schools)); }catch(e){ $('schNote').textContent='這個環境無法儲存學校資料，只在本次開啟期間有效。'; } }
+try{ const raw = localStorage.getItem('profile_v1'); if(raw){ const p=JSON.parse(raw); if(p && typeof p.cert==='string') myCert=p.cert; } }catch(e){}
+function storeFail(){ const n=$('schNote'); if(n) n.textContent='這個環境無法儲存資料，只在本次開啟期間有效。'; }
+function saveSchools(){ try{ localStorage.setItem('schools_v1', JSON.stringify(schools)); }catch(e){ storeFail(); } }
+function saveProfile(){ try{ localStorage.setItem('profile_v1', JSON.stringify({cert:myCert})); }catch(e){ storeFail(); } }
 const SAMPLE = {yy:'115',mm:'10',dd:'22',hh:'0',days:'1',sum:'2055',prem:'719'};
 
 function vals(){
@@ -560,8 +585,9 @@ function applySchool(id){
   $('holder').value = sc ? sc.name : '';
   $('rep').value = sc ? sc.rep : '';
   $('uidOrg').value = sc ? sc.uid : '';
-  $('certTop').value = sc ? sc.c1 : 'HB0L794757';
-  $('certBot').value = sc ? sc.c2 : '';
+  const own = sc && (sc.c1 || sc.c2);
+  $('certTop').value = own ? sc.c1 : myCert;
+  $('certBot').value = own ? sc.c2 : '';
   renderSchoolPick();
 }
 function renderSchoolPick(){
@@ -589,14 +615,14 @@ function applyType(t, initial){
   if(t==='school'){
     state.rel='rep'; state.kind='prop'; $('co').value='國泰';
     $('grp').checked = true;
-    applySchool(initial ? 'puren' : (state.school||'puren'));
+    applySchool(schools.some(x=>x.id===state.school) ? state.school : '__free');
     if(!$('days').value) $('days').value='1';
   } else {
     state.rel='self'; state.kind='prop'; $('co').value='美商安達';
     $('grp').checked = false;
-    $('certTop').value='HB0L794757'; $('certBot').value='';
+    $('certTop').value=myCert; $('certBot').value='';
   }
-  $('presetNote').textContent = t==='school' ? (state.sample ? '目前帶入的是範本原值（115.10.22 普仁國小），請改成本案資料。' : '') : '個人客戶：預設本人投保、美商安達、只填一個證號。';
+  $('presetNote').textContent = t==='school' ? (state.sample ? '目前帶入的是範例日期與金額（115.10.22），請改成本案資料。' : '') : '個人客戶：預設本人投保、美商安達、只填一個證號。';
   $('schoolBox').hidden = t!=='school';
   syncRelUI(); syncCoUI();
   state.fnameTouched=false;
@@ -704,20 +730,97 @@ $('schDel').addEventListener('click',()=>{
 ['yy','mm','dd','hh','days','sum','prem'].forEach(id=>$(id).addEventListener('input',()=>{ if(state.sample && state.type==='school') $('presetNote').textContent=''; state.sample=false; }));
 $('reseed').addEventListener('click',()=>{ seedCustom(); schedule(); });
 
+function refreshMyNote(){
+  $('myNote').textContent = myCert ? '已設定。個人客戶和各學校會自動帶入（學校另外填了證號時，以學校的為準）。' : '尚未設定。設定後，個人客戶和各學校都會自動帶入。';
+}
+$('myCert').value = myCert; refreshMyNote();
+$('myCert').addEventListener('input',()=>{
+  const old = myCert;
+  myCert = $('myCert').value.trim().toUpperCase(); saveProfile(); refreshMyNote();
+  // 目前使用的是「我的證號」時，同步更新證號欄
+  if(!$('certBot').value.trim() && ($('certTop').value.trim()===old)) { $('certTop').value = myCert; schedule(); }
+});
+
+/* ---------- 備份與還原 ---------- */
+const BK_APP = 'travel-insurance-report';
+function exportObj(){
+  return {app:BK_APP, version:1, exportedAt:new Date().toISOString(),
+    profile:{cert:myCert},
+    schools: schools.map(x=>({label:x.label||'', name:x.name||'', rep:x.rep||'', uid:x.uid||'', c1:x.c1||'', c2:x.c2||''}))};
+}
+function exportText(){ return JSON.stringify(exportObj()); }
+function clean(v,max){ return String(v==null?'':v).replace(/[\u0000-\u001f]/g,'').trim().slice(0,max||80); }
+function parseBackup(text){
+  let o; try{ o = JSON.parse(String(text||'').trim()); }catch(e){ throw new Error('看不懂這段內容，請確認是完整貼上備份文字。'); }
+  if(!o || o.app!==BK_APP) throw new Error('這不是本工具的備份內容。');
+  if(typeof o.version!=='number' || o.version>1) throw new Error('備份檔版本比目前網頁新，請重新整理網頁後再試。');
+  if(!Array.isArray(o.schools)) throw new Error('備份內容缺少學校資料。');
+  const list = o.schools.slice(0,2000).map(x=>({label:clean(x&&x.label,30), name:clean(x&&x.name,60), rep:clean(x&&x.rep,30), uid:clean(x&&x.uid,20), c1:clean(x&&x.c1,20).toUpperCase(), c2:clean(x&&x.c2,20).toUpperCase()})).filter(x=>x.label||x.name);
+  return {schools:list, cert: clean(o.profile&&o.profile.cert,20).toUpperCase()};
+}
+const keyOf = x => (x.name||x.label||'').toLowerCase();
+function doImport(text, mode){
+  const d = parseBackup(text);
+  let added=0, updated=0;
+  if(mode==='replace'){
+    schools = d.schools.map((x,i)=>({...x,id:'s'+Date.now()+'_'+i}));
+    added = schools.length;
+    if(d.cert) myCert = d.cert;
+  } else {
+    d.schools.forEach((x,i)=>{
+      const j = schools.findIndex(y=>keyOf(y)===keyOf(x));
+      if(j>=0){ schools[j] = {...schools[j],...x,id:schools[j].id}; updated++; }
+      else { schools.push({...x,id:'s'+Date.now()+'_'+i}); added++; }
+    });
+    if(!myCert && d.cert) myCert = d.cert;
+  }
+  saveSchools(); saveProfile();
+  $('myCert').value = myCert; refreshMyNote();
+  if(!schools.some(x=>x.id===state.school)) state.school='__free';
+  renderSchoolPick();
+  return {added, updated};
+}
+async function saveFile(blob,name){
+  if(downloads){ await downloads.save({filename:name, data:blob}); return; }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),30000);
+}
+$('bkFile').addEventListener('click', async ()=>{
+  const d=new Date(), p=n=>String(n).padStart(2,'0');
+  const name = `旅平險學校資料備份-${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}.json`;
+  try{ await saveFile(new Blob([JSON.stringify(exportObj(),null,1)],{type:'application/json'}), name); $('bkMsg').textContent='已匯出：'+name; }
+  catch(e){ $('bkMsg').textContent = e && e.code==='declined' ? '已取消。' : '匯出失敗：'+(e&&e.message||e); }
+});
+$('bkCopy').addEventListener('click', async ()=>{
+  const t = exportText(); const ta = $('bkText');
+  try{ await navigator.clipboard.writeText(t); $('bkMsg').textContent='已複製。可貼到 LINE 或備忘錄保存。'; }
+  catch(e){ ta.value = t; ta.focus(); ta.select(); $('bkMsg').textContent='無法直接複製，已把文字放在上方輸入框，請全選後自行複製。'; }
+});
+$('bkPick').addEventListener('change',()=>{
+  const f = $('bkPick').files && $('bkPick').files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{ $('bkText').value = String(r.result||''); $('bkMsg').textContent='已讀入備份檔，請按「匯入」。'; };
+  r.onerror = ()=>{ $('bkMsg').textContent='讀取檔案失敗。'; };
+  r.readAsText(f);
+});
+let bkMode='merge';
+$('bkMode').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) return; bkMode=b.dataset.v; setPressed($('bkMode'),b); });
+$('bkImport').addEventListener('click',()=>{
+  try{
+    const r = doImport($('bkText').value, bkMode);
+    $('bkMsg').textContent = bkMode==='replace' ? `已取代，共 ${r.added} 間學校。` : `已合併：新增 ${r.added} 間，更新 ${r.updated} 間。`;
+    $('bkText').value='';
+  }catch(e){ $('bkMsg').textContent = e.message; }
+});
+
 let downloads=null;
 $('save').addEventListener('click', async ()=>{
   const st=$('status'); st.textContent='產生中…';
   try{
     const bytes = await buildPdf(currentState());
     const name = ($('fname').value.trim()||'分析報告書').replace(/[\\/:*?"<>|]/g,'_') + '.pdf';
-    const blob = new Blob([bytes],{type:'application/pdf'});
-    if(downloads){
-      await downloads.save({filename:name, data:blob});
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),30000);
-    }
+    await saveFile(new Blob([bytes],{type:'application/pdf'}), name);
     st.textContent='已交給瀏覽器儲存：'+name;
   }catch(e){
     st.textContent = e && e.code==='declined' ? '已取消儲存。' : '儲存失敗：'+(e && e.message || e);
