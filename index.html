@@ -524,13 +524,13 @@ function suggestName(v){
 /* ---------- 畫面更新 ---------- */
 let renderTok = 0, timer = 0;
 function currentState(){
-  if(state.preset==='custom' && state.custom) return state.custom;
+  if(state.type==='custom' && state.custom) return state.custom;
   return derive(vals());
 }
 async function render(){
   const tok = ++renderTok;
   const v = vals();
-  const isCustom = state.preset==='custom';
+  const isCustom = state.type==='custom';
   // 提示：總保額是否超過 500 萬
   const sumTxt = isCustom ? (state.custom.texts.prod_sum||'') : v.sum;
   const sum = Number(sumTxt);
@@ -677,7 +677,7 @@ function seedCustom(){
   buildCustomUI();
 }
 function showMode(){
-  const c = state.preset==='custom';
+  const c = state.type==='custom';
   $('guided').hidden = c; $('customBox').hidden = !c;
 }
 
