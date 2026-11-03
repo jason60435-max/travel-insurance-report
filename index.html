@@ -974,6 +974,17 @@ $('save').addEventListener('click', async ()=>{
 })();
 
 renderSchoolPick(); applyType('school',true); showMode();
+/* 由「安達旅平險試算」帶入：?from=anda&yy&mm&dd&hh&days&sum&prem（僅非個資欄位），載入後清除網址參數 */
+(function(){
+  try{
+    const q=new URLSearchParams(location.search); if(q.get('from')!=='anda') return;
+    const pb=$('preset').querySelector('[data-p="person"]'); setPressed($('preset'),pb);
+    applyType('person',false); showMode();
+    const num=(k)=>{const v=(q.get(k)||'').replace(/[^0-9.]/g,''); return v};
+    ['yy','mm','dd','hh','days','sum','prem'].forEach(k=>{ const v=num(k); if(v!=='' && $(k)) $(k).value=v; });
+    history.replaceState(null,'',location.pathname);
+  }catch(e){}
+})();
 render();
 </script>
 
