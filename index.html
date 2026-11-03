@@ -57,6 +57,11 @@ details.sec .inner{padding:4px 12px 12px;display:grid;gap:14px}
 .grp{display:grid;gap:8px;min-width:0}
 .grp h3{margin:0;font-size:.85rem;color:var(--muted);font-weight:600}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
+.hint.warn{color:var(--warn)}
+.req{color:#d33;font-weight:700;margin-left:2px}
+.chip:disabled{opacity:.9;cursor:default}
+.primary:disabled{opacity:.45;cursor:not-allowed}
+#missing{line-height:1.5}
 .sub{display:grid;gap:8px;padding-left:12px;border-left:2px solid var(--line)}
 </style>
 </head>
@@ -221,6 +226,7 @@ details.sec .inner{padding:4px 12px 12px;display:grid;gap:14px}
       <h2>檔案</h2>
       <label>活動名稱（選填，會放進檔名）<input type="text" id="event" autocomplete="off" placeholder="例如：合唱團比賽(40人)"></label>
       <label>檔名<input type="text" id="fname" autocomplete="off"></label>
+      <div class="badge need" id="missing" role="status" hidden></div>
       <button type="button" class="primary" id="save">儲存 PDF</button>
       <p id="status"></p>
     </section>
@@ -381,6 +387,26 @@ function idText(id){
   if(!r) return id ? '格式看不出性別，請自行確認' : '';
   return (r.sex==='M'?'男':'女')+'、'+(r.nat==='tw'?'本國籍':'外國籍')+'（依身分證字號自動判斷）';
 }
+function twCheck(id){
+  const M='ABCDEFGHJKLMNPQRSTUVXYWZIO'; const n=M.indexOf(id[0])+10;
+  let t=Math.floor(n/10)+(n%10)*9; for(let i=1;i<=8;i++) t+=(+id[i])*(9-i); t+=(+id[9]);
+  return t%10===0;
+}
+// 自行填寫用：看不出來的一律視為外國籍
+function idStatus(raw, touched){
+  const id=(raw||'').toUpperCase().trim();
+  if(!id) return {kind:'empty'};
+  const m = idInfo(id);
+  if(m){ const bad = m.nat==='tw' && !twCheck(id); return {nat:m.nat, sex:m.sex, warn:bad, msg: bad?'身分證字號檢查碼不符，請確認是否輸入錯誤':''}; }
+  if(id.length===10) return {nat:'fo', sex:null, warn:true, msg:'無法判斷性別與國籍，已視為外國籍，請確認，並自行選擇性別'};
+  return {nat:'fo', sex:null, warn:true, msg: touched?'格式不符，請確認是否為護照號碼；已視為外國籍，請自行選擇性別':''};
+}
+function idHint(S){
+  if(!S || S.kind==='empty') return {t:'',warn:false};
+  const base = S.sex ? `性別：${S.sex==='M'?'男':'女'}、${S.nat==='tw'?'本國籍':'外國籍'}（依身分證字號自動判斷）` : '';
+  const t = [base, S.msg].filter(Boolean).join('　');
+  return {t, warn: !!S.msg};
+}
 function normBirth(s){
   s = String(s||'').trim(); if(!s) return '';
   let m = s.match(/^(\d{2,3})\D+(\d{1,2})\D+(\d{1,2})\D*$/);
@@ -527,7 +553,7 @@ function suggestName(v){
   const kk = (/產物|人壽/.test(co))?'':k;
   const holder = (v.holder||'').replace(/^桃園市中壢區/,'') || '客戶';
   const date = [v.yy||'yyy',(v.mm||'mm').padStart(2,'0'),(v.dd||'dd').padStart(2,'0')].join('.');
-  return `${date}-${holder}${co}${kk}旅平險${v.event?'-'+v.event:''}-詮國新版分析報告`;
+  return `${date}-${holder}${co}${kk}${v.trip===false?'':'旅平險'}${v.event?'-'+v.event:''}-詮國新版分析報告`;
 }
 
 /* ---------- 畫面更新 ---------- */
@@ -563,7 +589,14 @@ async function render(){
   }catch(e){ console.error(e); $('status').textContent = '預覽失敗：' + (e && e.message || e); }
 }
 function curCustom(){ return state.type==='custom' ? state.custom : state.type==='raw' ? state.raw : null; }
-function customVals(v){ const t=curCustom().texts; return {...v, holder:t.h_name||'', co:t.co||'', yy:t.pyy||'',mm:t.pmm||'',dd:t.pdd||'',kind:v.kind}; }
+function customVals(v){
+  const cs=curCustom(), t=cs.texts, I=ids(), ck=i=>cs.checks.has(i);
+  const kind = ck(B(424.0,'人壽'))?'life':ck(B(424.0,'產物'))?'prop':'';
+  const cat = ck(I.cat.L)?'L':ck(I.cat.P)?'P':ck(I.cat.T)?'T':null;
+  let yy=t.pyy||'', mm=t.pmm||'', dd=t.pdd||'';
+  if(cat==='L'){ const d=new Date(); yy=String(d.getFullYear()-1911); mm=String(d.getMonth()+1); dd=String(d.getDate()); }  // 人身沒有保險期間，用輸出日期
+  return {...v, holder:t.h_name||'', co:t.co||'', yy, mm, dd, kind, trip:(cat==='T'||cat===null)};
+}
 function schedule(){ clearTimeout(timer); timer = setTimeout(render, 250); }
 function setPressed(box,btn){ box.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed', b===btn?'true':'false')); }
 
@@ -663,6 +696,12 @@ function ids(){
     low:B(692.6,'低度'), high:B(692.6,'高度'),
     veryHigh:[B(595.2,'來自高風險'),B(617.1,'來自高風險'),...rowAll(660.6),...rowAll(671.1)],
     highs:[B(545.7,'非營利'),B(556.5,'第1'),B(606.2,'法人'),B(628.0,'OIU'),B(638.9,'主動投保'),B(649.8,'OBU')],
+    cat:{L:B(54.8,'人身'),P:B(54.8,'財產'),T:B(54.8,'旅平')},
+    hnat:rowAll(92.4), hnatPair:[B(92.4,'本國籍'),B(92.4,'外國籍')], curUS:[B(343.0,'美元'),B(343.0,'其他')], invest:B(229.4,'投資型保險'),
+    ack:[B(308.9,'要保人已確實'),B(320.5,'已確認未提供')],
+    prodName:B(446.6,'險種名稱'), prodTrip:B(446.6,'旅行平安險'),
+    covLife:['壽險','年金險','健康險','傷害險'].map(s=>B(481.7,s)), covTrip:B(481.7,'旅平險'),
+    kindLife:rowAll(229.4), kindProp:rowAll(241.1), kindOther:B(241.1,'其他'),
     dep:{h_relother:B(107.6,'其他'), o_purpose:B(207.5,'其他'), o_desig:B(218.0,'是'), o_kind:B(241.1,'其他'), o_prior:B(280.0,'是'),
          c_other:B(343.0,'其他'), s_other:B(390.2,'其他'), ref_other:B(435.7,'其他'), prod_name:B(446.6,'險種名稱'),
          doc_other:B(458.4,'其他'), cur_other:B(469.3,'其他'), cov_other:B(481.7,'其他'), why_other:B(494.0,'其他')}
@@ -670,6 +709,21 @@ function ids(){
   return IDS;
 }
 const INS_TEXTS = ['i_name','i_birth','i_id','i_job','i_rep'];
+const AML_TITLES = (()=>{ const a=[]; let on=false; GROUPS.forEach(g=>{ if(g.sec) on = g.sec.startsWith('三、'); if(on) a.push(g.title); }); return a; })();
+const G7='7. 要保人對匯率風險之承受能力', G8='8. 要保人之投資屬性及風險承受能力', G9='9. 評估六十五歲以上之客戶',
+  GRET='2. 繳交保險費之人預估退休剩餘年期', GSRC='3. 繳交保險費之來源';
+const EXEMPT_TITLES = ['要保人','被保險人','總和評價','異常交易徵狀'];   // 其餘有顯示的題目一律必填
+const EXEMPT_KEYS = ['sgm','sgd','certBot'];
+const SEC_SHORT = {'一、基本資料':'基本資料','二、保險契約分析報告書':'分析報告書','保費支出':'保費支出','業務員建議事項':'建議事項','三、防制洗錢及打擊資恐風險評估檢核表':'防制洗錢','四、簽名確認':'簽名'};
+const OCC_NOTE = '就客戶所從事之職業類別分為：\n第 1 類：包含當鋪、金融代辦中心、地下匯兌等提供金融服務之非銀行單位、賭場、賽馬或賭博相關行業\n第 2 類：包含國內外政治人士、軍火商、珠寶、骨董或名畫古玩商、銀樓\n第 3 類：不動產買賣商、律師、會計師、貿易商、證券或期貨仲介經紀商\n第 4 類：前 3 類以外者';
+let MISSING = [];
+const idTouch = {h_id:false, i_id:false};
+function updateGate(){
+  const on = state.type==='custom' && MISSING.length>0;
+  $('save').disabled = on;
+  const m = $('missing');
+  if(on){ m.hidden=false; m.textContent = '尚未填寫必填欄位（＊），填完才能儲存：' + MISSING.join('、'); } else m.hidden=true;
+}
 const AMT = {'萬':'a_wan','單位':'a_unit','計劃':'a_plan','元':'a_yuan'};
 let smartRefresh = ()=>{};
 function buildCustomUI(kind){
@@ -680,46 +734,124 @@ function buildCustomUI(kind){
   if(!RADIOS) RADIOS = radioSets();
   const I = ids();
   const chipEls = {}, fieldEls = {}, fieldInputs = {};
-  let insBox=null, badge=null, modeEls=null; const hints={};
-  let det=null, inner=null;
+  let insBox=null, badge=null, modeEls=null, hModeEls=null; const hints={}; const ginfo={}, labelNodes={}, secDets=[];
+  let det=null, inner=null, curSec='';
   const syncChips = ()=>{ for(const id in chipEls) chipEls[id].setAttribute('aria-pressed', st.checks.has(+id)?'true':'false'); };
   const refresh = ()=>{
     if(raw) return;
-    const self = st.checks.has(I.self), grp = st.checks.has(I.grp);
-    const autoGender = (set, idText)=>{ set.forEach(i=>st.checks.delete(i)); const r = idInfo(idText); if(r) st.checks.add(r.sex==='M'?set[0]:set[1]); return r; };
-    const rh = autoGender(I.holderGender, st.texts.h_id);
-    const ri = (self||grp) ? null : autoGender(I.gender, st.texts.i_id);
-    if(hints.h) hints.h.textContent = rh ? `性別：${rh.sex==='M'?'男':'女'}（依身分證字號自動判斷）` : '';
-    if(hints.i) hints.i.textContent = ri ? `性別：${ri.sex==='M'?'男':'女'}（依身分證字號自動判斷）` : '';
-    if(modeEls){ modeEls.P.setAttribute('aria-pressed', !grp?'true':'false'); modeEls.G.setAttribute('aria-pressed', grp?'true':'false'); }
-    if(self || grp){
-      I.gender.forEach(i=>st.checks.delete(i)); I.nat.forEach(i=>st.checks.delete(i));
-      INS_TEXTS.forEach(k=>delete st.texts[k]);
-      if(self) st.checks.delete(I.grp);
-    }
+    const meta = st.meta || (st.meta={hLegal:false,iLegal:false});
+    const ck = id=>st.checks.has(id);
+    const self = ck(I.self), grp = ck(I.grp);
+    if(grp) meta.iLegal = false;
+    const hLegal = !!meta.hLegal, iLegal = !!meta.iLegal && !self && !grp;
+    const indiv = !(self||grp||iLegal);
+    const stH = hLegal ? null : idStatus(st.texts.h_id, idTouch.h_id);
+    const stI = indiv ? idStatus(st.texts.i_id, idTouch.i_id) : null;
+    const autoG = meta.autoG || (meta.autoG={});
+    const applyId = (key, S, gset, nset)=>{
+      if(!S || S.kind==='empty'){ nset.forEach(i=>st.checks.delete(i)); gset.forEach(i=>st.checks.delete(i)); autoG[key]=false; return; }
+      nset.forEach(i=>st.checks.delete(i)); st.checks.add(S.nat==='tw'?nset[0]:nset[1]);
+      if(S.sex){ gset.forEach(i=>st.checks.delete(i)); st.checks.add(S.sex==='M'?gset[0]:gset[1]); autoG[key]=true; }
+      else if(autoG[key]){ gset.forEach(i=>st.checks.delete(i)); autoG[key]=false; }
+    };
+    if(hLegal) I.holderGender.forEach(i=>st.checks.delete(i)); else applyId('h', stH, I.holderGender, I.hnatPair);
+    if(!indiv) I.gender.forEach(i=>st.checks.delete(i)); else applyId('i', stI, I.gender, I.nat);
+    const hh = idHint(stH), hi = idHint(stI);
+    if(hints.h){ hints.h.textContent = hh.t; hints.h.classList.toggle('warn', hh.warn); hints.h.hidden = hLegal; }
+    if(hints.i){ hints.i.textContent = hi.t; hints.i.classList.toggle('warn', hi.warn); hints.i.hidden = !indiv; }
+    if(modeEls){ modeEls.P.setAttribute('aria-pressed', indiv?'true':'false'); modeEls.L.setAttribute('aria-pressed', iLegal?'true':'false'); modeEls.G.setAttribute('aria-pressed', grp?'true':'false'); }
+    if(hModeEls){ hModeEls.P.setAttribute('aria-pressed', !hLegal?'true':'false'); hModeEls.L.setAttribute('aria-pressed', hLegal?'true':'false'); }
+    if(self) st.checks.delete(I.grp);
+    if(labelNodes.h_name) labelNodes.h_name.textContent = hLegal ? '要保人名稱（學校／法人）' : '要保人姓名';
+    if(labelNodes.h_id) labelNodes.h_id.textContent = hLegal ? '要保人統一編號' : '要保人身分證字號';
+    if(labelNodes.i_name) labelNodes.i_name.textContent = iLegal ? '被保險人名稱（法人）' : '被保險人姓名';
+    if(labelNodes.i_id) labelNodes.i_id.textContent = iLegal ? '被保險人統一編號' : '被保險人身分證字號';
+
+    // ---- 依報告類別、條件決定哪些欄位隱藏／鎖定 ----
+    const cat = ck(I.cat.L)?'L':ck(I.cat.P)?'P':ck(I.cat.T)?'T':null;
+    const hideF=new Set(), hideC=new Set(), hideG=new Set(), lock=new Set(), softC=new Set(), forced=[];
+    if(hLegal){ hideF.add('h_birth'); hideF.add('h_job'); I.hnat.forEach(i=>hideC.add(i)); } else hideF.add('h_rep');
+    if(self||grp){ INS_TEXTS.forEach(k=>hideF.add(k)); I.gender.concat(I.nat).forEach(i=>hideC.add(i)); }
+    else if(iLegal){ hideF.add('i_birth'); hideF.add('i_job'); I.gender.concat(I.nat).forEach(i=>hideC.add(i)); }
+    else hideF.add('i_rep');
+    const lifeLike = (cat==='L'||cat===null);
+    if(cat && cat!=='L'){ hideF.add('h_job'); hideF.add('i_job'); hideF.add('pyears'); hideG.add(G9); AML_TITLES.forEach(t=>hideG.add(t)); }
+    if(cat==='T'){ ['1. 本次投保之目的及需求','3. 欲投保之保險種類','5. 欲投保之保險金額',G7].forEach(t=>hideG.add(t)); }
+    if(cat==='L') hideG.add('4. 保險期間');
+    { const bd = k=>{ const m=normBirth(st.texts[k]||'').match(/^(\d{2,3})\/(\d{2})\/(\d{2})$/); return m ? new Date(+m[1]+1911,+m[2]-1,+m[3]) : null; };
+      const now = new Date(); const over65 = d=>!!d && new Date(d.getFullYear()+65,d.getMonth(),d.getDate())<=now;
+      if(!(lifeLike && (over65(hLegal?null:bd('h_birth')) || over65(indiv?bd('i_birth'):null)))) hideG.add(G9); }
+    if(!(ck(I.curUS[0])||ck(I.curUS[1]))) hideG.add(G7);
+    const showInv = lifeLike && ck(I.invest);
+    if(!showInv) hideG.add(G8);
+    if(!(lifeLike && (parseFloat(st.texts.pyears)||0) > 1)){ hideG.add(GRET); hideG.add(GSRC); }
+    if(cat==='L') I.kindProp.filter(i=>i!==I.kindOther).forEach(i=>hideC.add(i));
+    if(cat==='P') I.kindLife.forEach(i=>hideC.add(i));
+    if(cat==='T'){ hideC.add(I.prodName); hideF.add('prod_name'); forced.push(I.prodTrip); }
+    else if(cat){ hideC.add(I.prodTrip); forced.push(I.prodName); }
+    if(cat==='T'){ I.covLife.forEach(i=>hideC.add(i)); forced.push(I.covTrip); }
+    if(cat==='P'){ I.covLife.forEach(i=>hideC.add(i)); hideC.add(I.covTrip); }
+    if(cat==='L') hideC.add(I.covTrip);
+    if(showInv) I.ack.forEach(i=>forced.push(i));
+    const needG = S=>S && S.kind!=='empty' && !S.sex;
+    if(!needG(stH)) I.holderGender.forEach(i=>softC.add(i));
+    if(!needG(stI)) I.gender.forEach(i=>softC.add(i));
+    if(stH && stH.kind!=='empty') I.hnatPair.forEach(i=>lock.add(i));
+    if(stI && stI.kind!=='empty') I.nat.forEach(i=>lock.add(i));
+    // 清掉被隱藏的內容
+    hideG.forEach(t=>{ const gi=ginfo[t]; if(!gi) return; gi.ids.forEach(i=>st.checks.delete(i)); gi.keys.forEach(k=>delete st.texts[k]); });
+    hideC.forEach(i=>st.checks.delete(i));
+    hideF.forEach(k=>delete st.texts[k]);
+    if(self||grp) INS_TEXTS.forEach(k=>delete st.texts[k]);
+    for(const k in I.dep){ if(!ck(I.dep[k])) delete st.texts[k]; }
+    // 強制勾選（同組其他選項取消）
+    forced.forEach(id=>{ const set = RADIOS.find(x=>x.includes(id)); if(set) set.forEach(o=>st.checks.delete(o)); st.checks.add(id); lock.add(id); });
+    // 畫面
+    for(const k in fieldEls) fieldEls[k].hidden = hideF.has(k) || (k in I.dep && !ck(I.dep[k]));
+    for(const id in chipEls){ chipEls[id].hidden = hideC.has(+id) || softC.has(+id); chipEls[id].disabled = lock.has(+id); }
+    for(const t in ginfo) ginfo[t].box.hidden = hideG.has(t);
     if(insBox) insBox.hidden = self;
-    if(hints.i) hints.i.hidden = self||grp;
-    I.gender.forEach(i=>{ if(chipEls[i]) chipEls[i].hidden = self||grp; });
-    I.nat.forEach(i=>{ if(chipEls[i]) chipEls[i].hidden = self||grp; });
-    if(chipEls[I.grp]) chipEls[I.grp].hidden = self;
-    INS_TEXTS.forEach(k=>{ if(fieldEls[k]) fieldEls[k].hidden = self||grp; });
-    for(const k in I.dep){
-      const on = st.checks.has(I.dep[k]);
-      if(fieldEls[k]) fieldEls[k].hidden = !on;
-      if(!on) delete st.texts[k];
-    }
+    secDets.forEach(d=>{ d.hidden = [...d.querySelectorAll('.grp')].every(x=>x.hidden); });
     for(const k in fieldInputs){ if(!st.texts[k] && fieldInputs[k].value.trim()) fieldInputs[k].value=''; }
-    // 總和評價：依上面的勾選自動判斷
-    const veryHigh = I.veryHigh.filter(i=>st.checks.has(i)).length;
-    const highs = I.highs.filter(i=>st.checks.has(i)).length;
-    const isHigh = veryHigh>=1 || highs>=4;
+    // 總和評價：依上面的勾選自動判斷（只有人身需要）
+    const amlOn = !hideG.has('總和評價');
     st.checks.delete(I.low); st.checks.delete(I.high);
-    st.checks.add(isHigh?I.high:I.low);
-    if(badge){
-      badge.className = 'badge ' + (isHigh?'need':'noneed');
-      badge.style.whiteSpace='pre-line';
-      badge.textContent = `${isHigh?'高度風險':'低度風險'}（極高風險 ${veryHigh} 項、高風險 ${highs} 項）` + (isHigh ? '\n需「單位主管」及「防制洗錢及打擊資恐專責主管」，兩位主管皆須簽核後始可送件。' : '');
+    if(amlOn){
+      const veryHigh = I.veryHigh.filter(i=>ck(i)).length;
+      const highs = I.highs.filter(i=>ck(i)).length;
+      const isHigh = veryHigh>=1 || highs>=4;
+      st.checks.add(isHigh?I.high:I.low);
+      if(badge){
+        badge.className = 'badge ' + (isHigh?'need':'noneed');
+        badge.style.whiteSpace='pre-line';
+        badge.textContent = `${isHigh?'高度風險':'低度風險'}（極高風險 ${veryHigh} 項、高風險 ${highs} 項）` + (isHigh ? '\n需「單位主管」及「防制洗錢及打擊資恐專責主管」，兩位主管皆須簽核後始可送件。' : '');
+      }
     }
+    // ---- 必填檢查 ----
+    const miss=[], seen=new Set(); const need=(ok,label)=>{ if(!ok && !seen.has(label)){ seen.add(label); miss.push(label); } };
+    const T_ = k=>!!String(st.texts[k]||'').trim();
+    need(!!cat,'報告類別');
+    // 有顯示的文字欄位一律必填（簽署月日、業務員二證號除外）
+    for(const k in fieldEls){
+      const w = fieldEls[k]; if(w.hidden || EXEMPT_KEYS.includes(k)) continue;
+      const g = w.closest('.grp'); if(g && g.hidden) continue;
+      need(T_(k), labelNodes[k]?labelNodes[k].textContent:F[k].l);
+    }
+    if(!hLegal) need(I.holderGender.some(ck),'要保人性別');
+    if(indiv) need(I.gender.some(ck),'被保險人性別');
+    // 有顯示的選擇題一律要選（異常交易徵狀、總和評價除外）
+    for(const t in ginfo){
+      const gi = ginfo[t];
+      if(gi.box.hidden || EXEMPT_TITLES.includes(t) || t==='報告類別' || t===G8 || !gi.rows.length) continue;
+      if(![...gi.box.querySelectorAll('.chip')].some(c=>!c.hidden)) continue;
+      need(gi.ids.some(ck), gi.label);
+    }
+    const g5 = ginfo['5. 欲投保之保險金額']; if(g5 && !g5.box.hidden) need(Object.values(AMT).some(T_), g5.label);
+    if(!ginfo[G8].box.hidden){
+      need(['積極型','穩健型','保守型'].some(x=>ck(B(308.9,x))), '分析報告書 8. 投資屬性（積極型／穩健型／保守型）');
+      need(['可承擔投資風險','不可承擔投資風險'].some(x=>ck(B(320.5,x))), '分析報告書 8. 是否可承擔投資風險');
+    }
+    MISSING = miss; updateGate();
     syncChips();
   };
   GROUPS.forEach(g=>{
@@ -727,32 +859,37 @@ function buildCustomUI(kind){
       det = document.createElement('details'); det.className='sec';
       const sm = document.createElement('summary'); sm.textContent = g.sec||'其他'; det.appendChild(sm);
       inner = document.createElement('div'); inner.className='inner'; det.appendChild(inner);
-      root.appendChild(det);
+      root.appendChild(det); secDets.push(det);
     }
     const box = document.createElement('div'); box.className='grp';
     const h = document.createElement('h3'); h.textContent = g.title; box.appendChild(h);
+    if(!raw && !EXEMPT_TITLES.includes(g.title) && (g.rows||[]).length){ const sp=document.createElement('span'); sp.className='req'; sp.textContent='＊'; h.appendChild(sp); }
+    if(g.sec) curSec = SEC_SHORT[g.sec]||g.sec;
+    const gids = []; if(!raw) ginfo[g.title] = {box, ids:gids, keys:g.fields||[], rows:g.rows||[], label:(curSec&&!g.top?curSec+' ':'')+g.title};
     if(!raw && g.title==='被保險人') insBox = box;
     const isAml = !raw && g.title==='總和評價';
     const chips = document.createElement('div'); chips.className='chips';
-    let modeP=null, modeG=null;
-    if(!raw && g.title==='被保險人'){
-      modeP = document.createElement('button'); modeP.type='button'; modeP.className='chip'; modeP.textContent='個人';
-      modeG = document.createElement('button'); modeG.type='button'; modeG.className='chip'; modeG.textContent='團體(詳名冊)';
-      modeP.addEventListener('click',()=>{ st.checks.delete(I.grp); refresh(); schedule(); });
-      modeG.addEventListener('click',()=>{ st.checks.add(I.grp); refresh(); schedule(); });
-      chips.appendChild(modeP); chips.appendChild(modeG);
-      modeEls = {P:modeP, G:modeG};
+    if(!raw && (g.title==='要保人' || g.title==='被保險人')){
+      const meta = ()=> st.meta || (st.meta={hLegal:false,iLegal:false});
+      const mk = (txt,fn)=>{ const b=document.createElement('button'); b.type='button'; b.className='chip'; b.textContent=txt; b.addEventListener('click',()=>{ fn(); refresh(); schedule(); }); chips.appendChild(b); return b; };
+      if(g.title==='要保人'){
+        hModeEls = { P:mk('個人',()=>{ meta().hLegal=false; }), L:mk('法人',()=>{ meta().hLegal=true; }) };
+      } else {
+        modeEls = { P:mk('個人',()=>{ st.checks.delete(I.grp); meta().iLegal=false; }),
+                    L:mk('法人',()=>{ st.checks.delete(I.grp); meta().iLegal=true; }),
+                    G:mk('團體(詳名冊)',()=>{ st.checks.add(I.grp); meta().iLegal=false; }) };
+      }
     }
     if(isAml){
       badge = document.createElement('div'); badge.className='badge noneed'; badge.setAttribute('role','status');
       box.appendChild(badge);
     } else g.rows.forEach(r=>{
       BOXES.filter(b=>Math.abs(b.t-r)<1.6).sort((a,b)=>a.x-b.x).forEach(b=>{
-        if(!raw){ if(Math.abs(b.t-69.1)<1.6 || Math.abs(b.t-118.4)<1.6) return; if(b.id===I.grp) return; }
+        if(!raw){ if(b.id===I.grp) return; }
         const btn = document.createElement('button'); btn.type='button'; btn.className='chip';
         let label = b.label || '（無標籤）';
         if(!raw && Math.abs(b.t-446.6)<1.6 && label.startsWith('險種名稱')) label = '自行填寫險種名稱';
-        btn.textContent = label; btn.dataset.id=b.id; chipEls[b.id]=btn;
+        btn.textContent = label; btn.dataset.id=b.id; chipEls[b.id]=btn; if(!raw) gids.push(b.id);
         btn.setAttribute('aria-pressed', st.checks.has(b.id)?'true':'false');
         btn.addEventListener('click',()=>{
           const on = !st.checks.has(b.id);
@@ -770,9 +907,10 @@ function buildCustomUI(kind){
       });
     });
     if(chips.children.length) box.appendChild(chips);
+    if(g.title==='要保人職業'){ const nt=document.createElement('p'); nt.className='note'; nt.style.whiteSpace='pre-line'; nt.textContent=OCC_NOTE; box.appendChild(nt); }
     if(!raw && g.title.startsWith('5. 欲投保之保險金額')){
       const fr = document.createElement('div'); fr.className='row2';
-      const lb = document.createElement('label'); lb.textContent='保險金額';
+      const lb = document.createElement('label'); lb.textContent='保險金額'; { const sp=document.createElement('span'); sp.className='req'; sp.textContent='＊'; lb.appendChild(sp); }
       const inp = document.createElement('input'); inp.type='text'; inp.id='cf_amt'; inp.inputMode='numeric'; inp.autocomplete='off';
       const lb2 = document.createElement('label'); lb2.textContent='單位';
       const sel = document.createElement('select'); sel.id='cf_amtU';
@@ -785,7 +923,9 @@ function buildCustomUI(kind){
     } else if(g.fields){
       const fr = document.createElement('div'); fr.className='row2';
       g.fields.forEach(k=>{
-        const lb = document.createElement('label'); lb.textContent = F[k].l;
+        const lb = document.createElement('label');
+        const tn = document.createTextNode(F[k].l); lb.appendChild(tn); if(!raw) labelNodes[k]=tn;
+        if(!raw && !EXEMPT_KEYS.includes(k)){ const sp=document.createElement('span'); sp.className='req'; sp.textContent='＊'; lb.appendChild(sp); }
         const inp = document.createElement('input'); inp.type='text'; inp.id=pre+k; inp.autocomplete='off';
         inp.value = st.texts[k]||'';
         const isBirth = !raw && (k==='h_birth' || k==='i_birth');
@@ -793,8 +933,10 @@ function buildCustomUI(kind){
         inp.addEventListener('input',()=>{
           if(isBirth){ const d=inp.value.trim(); if(/^\d{7}$/.test(d)) inp.value = d.slice(0,3)+'/'+d.slice(3,5)+'/'+d.slice(5); }
           if(inp.value.trim()) st.texts[k]=inp.value.trim(); else delete st.texts[k];
+          if(idTouch[k]!==undefined) idTouch[k]=false;
           if(!raw) refresh(); schedule();
         });
+        if(!raw && idTouch[k]!==undefined) inp.addEventListener('blur',()=>{ idTouch[k]=true; refresh(); });
         if(isBirth) inp.addEventListener('blur',()=>{ if(inp.value.trim()){ inp.value = normBirth(inp.value); st.texts[k]=inp.value.trim(); schedule(); } });
         lb.appendChild(inp); fr.appendChild(lb); fieldEls[k]=lb; fieldInputs[k]=inp;
       });
@@ -812,7 +954,7 @@ function buildCustomUI(kind){
 }
 function seedCustom(kind){
   const d = derive(vals());
-  const o = {texts:{...d.texts}, checks:new Set(d.checks)};
+  const o = {texts:{...d.texts}, checks:new Set(d.checks), meta:{hLegal: vals().rel==='rep', iLegal:false}};
   if(kind==='raw') state.raw = o; else state.custom = o;
   buildCustomUI(kind);
 }
@@ -820,6 +962,7 @@ function showMode(){
   const c = state.type==='custom', r = state.type==='raw';
   $('guided').hidden = c || r; $('customBox').hidden = !c; $('rawBox').hidden = !r;
   $('backupCard').hidden = c || r;
+  updateGate();
 }
 
 /* ---------- 事件 ---------- */
